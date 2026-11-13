@@ -1,0 +1,67 @@
+{
+  "generation_mode": "deterministic",
+  "situation_summary": "État global : CRITICAL. 9 alertes consolidées (4 CRITICAL, 3 HIGH, 2 WARNING) regroupées en 6 incident(s) par proximité temporelle.",
+  "incident_classification": [
+    {
+      "incident_id": "INC-1",
+      "title": "Lenteur réseau (HTTP:80, HTTPS:443) + Rafale d'erreurs applicatives",
+      "severity": "HIGH",
+      "category": "application / performance"
+    },
+    {
+      "incident_id": "INC-2",
+      "title": "Rafale d'erreurs applicatives",
+      "severity": "WARNING",
+      "category": "application"
+    },
+    {
+      "incident_id": "INC-3",
+      "title": "Échecs d'authentification répétés (203.0.113.77) + Saturation CPU web-server-01",
+      "severity": "CRITICAL",
+      "category": "capacité / ressources / cybersécurité"
+    },
+    {
+      "incident_id": "INC-4",
+      "title": "Échecs réseau (DATABASE:5432)",
+      "severity": "HIGH",
+      "category": "disponibilité"
+    },
+    {
+      "incident_id": "INC-5",
+      "title": "Mémoire élevée db-server-01",
+      "severity": "CRITICAL",
+      "category": "capacité / ressources"
+    },
+    {
+      "incident_id": "INC-6",
+      "title": "Disque saturé app-server-01",
+      "severity": "CRITICAL",
+      "category": "capacité / ressources"
+    }
+  ],
+  "explanation": "INC-1 (2026-11-01 18:05:00 → 2026-11-01 20:05:00) : Chronologie : Lenteur réseau (HTTP:80, HTTPS:443) (01/11 18:05–01/11 20:05) → Rafale d'erreurs applicatives (01/11 18:40–01/11 19:52). Corrélation temporelle observée ; causalité non démontrée (aucune trace n'établit un lien de cause à effet). INC-2 (2026-11-02 04:00:00 → 2026-11-02 04:28:00) : Chronologie : Rafale d'erreurs applicatives (02/11 04:00–02/11 04:28). Aucune corrélation inter-composants observée. INC-3 (2026-11-02 05:00:00 → 2026-11-02 08:10:00) : Chronologie : Échecs d'authentification répétés (203.0.113.77) (02/11 05:00–02/11 06:24) → Saturation CPU web-server-01 (02/11 05:40–02/11 08:10) ; 4 erreur(s) applicative(s) isolée(s) dans la fenêtre (HTTP N Internal Server Error, Invalid application configuration). Corrélation temporelle observée ; causalité non démontrée (aucune trace n'établit un lien de cause à effet). INC-4 (2026-11-02 11:30:00 → 2026-11-02 12:40:00) : Chronologie : Échecs réseau (DATABASE:5432) (02/11 11:30–02/11 12:40) ; 1 erreur(s) applicative(s) isolée(s) dans la fenêtre (Database connection failed). Corrélation temporelle observée ; causalité non démontrée (aucune trace n'établit un lien de cause à effet). INC-5 (2026-11-02 22:20:00 → 2026-11-03 00:50:00) : Chronologie : Mémoire élevée db-server-01 (02/11 22:20–03/11 00:50). Aucune corrélation inter-composants observée. INC-6 (2026-11-03 15:00:00 → 2026-11-03 19:50:00) : Chronologie : Disque saturé app-server-01 (03/11 15:00–03/11 19:50). Aucune corrélation inter-composants observée.",
+  "root_cause_explanation": "Hypothèses (non démontrées) : INC-1 — Hypothèse non démontrée : dégradation de performance du service concerné (HTTP:80, HTTPS:443) avec répercussion sur l'application. Aucun seuil CPU, mémoire ou disque n'est franchi dans cette fenêtre : une cause applicative, base de données ou réseau est plus plausible qu'une saturation de ressources. INC-2 — Rafale d'erreurs sans signal réseau ou système concomitant. Hypothèse : régression applicative, dépendance externe ou configuration (voir les messages dominants). INC-3 — Les tentatives d'authentification depuis 203.0.113.77 et la charge de web-server-01 se chevauchent. Hypothèse non démontrée : la charge pourrait être aggravée par le trafic d'attaque. La surcharge se prolonge jusqu'à 02/11 08:10, après la fin des tentatives (02/11 06:24) : la charge ne peut pas être attribuée seulement à l'attaque. INC-4 — Hypothèse non démontrée : indisponibilité du service concerné (DATABASE:5432) avec répercussion sur l'application. Aucun seuil CPU, mémoire ou disque n'est franchi dans cette fenêtre : une cause applicative, base de données ou réseau est plus plausible qu'une saturation de ressources. INC-5 — Événement isolé : aucun autre signal concomitant. Hypothèse : fuite mémoire ou charge inhabituelle sur db-server-01. INC-6 — Événement isolé : aucun autre signal concomitant. Hypothèse : accumulation de données ou de journaux sur app-server-01.",
+  "actionable_recommendations": [
+    "Vérifier la disponibilité et les journaux du service (HTTP:80, HTTPS:443).",
+    "Examiner les erreurs dominantes de la rafale : Database connection failed (6), HTTP N Internal Server Error (4), Request timeout (4).",
+    "Examiner les erreurs dominantes de la rafale : Database connection failed (3), Invalid application configuration (3), HTTP N Internal Server Error (2).",
+    "Proposer le blocage de 203.0.113.77 au pare-feu (validation humaine requise) et vérifier les comptes ciblés : admin.",
+    "Vérifier les processus gourmands sur web-server-01 via 'top/htop', optimiser les threads applicatifs ou allouer des vCPU supplémentaires.",
+    "Vérifier la disponibilité et les journaux du service (DATABASE:5432).",
+    "Risque imminent d'activation du kernel OOM-Killer sur db-server-01. Identifier d'éventuelles fuites mémoire et redémarrer les services concernés.",
+    "Purger immédiatement les fichiers journaux obsolètes dans /var/log sur app-server-01, vider les caches temporaires et prévoir l'extension du volume de stockage."
+  ],
+  "requires_human_validation": true,
+  "human_validation_checkpoints": [
+    "INC-1 : Consulter les journaux du service et du client concernés pour établir l'ordre exact des défaillances.",
+    "INC-1 : Vérifier le pool de connexions et la disponibilité de la base de données.",
+    "INC-2 : Vérifier les déploiements ou changements de configuration autour de cette période.",
+    "INC-3 : Corréler avec les journaux d'accès du serveur concerné et les processus les plus consommateurs.",
+    "INC-3 : Valider avec l'équipe sécurité la légitimité de 203.0.113.77 avant tout blocage.",
+    "INC-4 : Consulter les journaux du service et du client concernés pour établir l'ordre exact des défaillances.",
+    "INC-4 : Vérifier le pool de connexions et la disponibilité de la base de données.",
+    "INC-5 : Identifier les processus consommateurs sur db-server-01 avant tout redémarrage.",
+    "INC-6 : Inspecter l'occupation par répertoire sur app-server-01 avant toute purge."
+  ],
+  "fallback_reason": "aucun LLM configuré"
+}

@@ -1,9 +1,40 @@
 import pandas as pd
 
+try:
+    from agents.common import fmt_ts, split_bursts
+except ImportError:  # exécution directe du fichier
+    from common import fmt_ts, split_bursts
+
+
+def _degradation_windows(df: pd.DataFrame, gap_minutes: int = 60) -> list:
+    """Fenêtres temporelles des communications dégradées (SLOW) ou en échec."""
+    if "status" not in df.columns or "timestamp" not in df.columns:
+        return []
+    d = df.copy()
+    d["timestamp"] = pd.to_datetime(d["timestamp"])
+    d["_st"] = d["status"].astype(str).str.upper()
+    windows = []
+    for status in ["FAILED", "TIMEOUT", "ERROR", "SLOW"]:
+        rows = d[d["_st"] == status]
+        for start, end, n in split_bursts(rows["timestamp"], gap_minutes):
+            part = rows[(rows["timestamp"] >= start) & (rows["timestamp"] <= end)]
+            windows.append(
+                {
+                    "status": status,
+                    "ports": sorted(int(p) for p in part["port"].unique()),
+                    "start": fmt_ts(start),
+                    "end": fmt_ts(end),
+                    "count": int(n),
+                    "max_latency_ms": round(float(part["latency_ms"].max()), 2),
+                }
+            )
+    return windows
+
 
 def network_agent(network_data: pd.DataFrame, config: dict) -> dict:
     """Agent responsable de la supervision des communications réseau."""
     results = {
+        "incident_windows": [],
         "mean_latency_ms": 0.0,
         "failure_rate_pct": 0.0,
         "total_communications": len(network_data),
@@ -45,6 +76,7 @@ def network_agent(network_data: pd.DataFrame, config: dict) -> dict:
                     "port": int(port),
                     "service": service_name,
                     "failed_requests": int(fail_count),
+                    "issue": "availability",
                 }
             )
 
@@ -84,6 +116,32 @@ def network_agent(network_data: pd.DataFrame, config: dict) -> dict:
                 "type": "NETWORK_FAILURES_DETECTED",
                 "severity": "HIGH",
                 "message": f"{len(failed_df)} requêtes réseau ont échoué",
+            }
+        )
+
+    # 6. Fenêtres de dégradation (SLOW / FAILED) et services lents
+    results["incident_windows"] = _degradation_windows(network_data)
+    for w in results["incident_windows"]:
+        if w["status"] != "SLOW":
+            continue
+        for port in w["ports"]:
+            results["problematic_services"].append(
+                {
+                    "port": port,
+                    "service": services_map.get(port, f"Service_Port_{port}"),
+                    "failed_requests": 0,
+                    "slow_requests": w["count"],
+                    "issue": "performance",
+                }
+            )
+        results["alerts"].append(
+            {
+                "type": "SLOW_COMMUNICATIONS",
+                "severity": "WARNING",
+                "message": (
+                    f"{w['count']} communications lentes sur les ports "
+                    f"{', '.join(map(str, w['ports']))} entre {w['start']} et {w['end']}"
+                ),
             }
         )
 

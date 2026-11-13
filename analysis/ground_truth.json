@@ -1,0 +1,14 @@
+{
+  "_note": "Vérité terrain RECONSTITUÉE par inspection des jeux de données synthétiques (aucune étiquette n'est fournie avec le TP). Les épisodes ci-dessous sont des changements de régime nets et datés (voir datasets/*.csv). Limite : les seuils de configuration étant franchis pendant ces épisodes, les règles y sont avantagées par construction.",
+  "tolerance_minutes": 30,
+  "events": [
+    {"id": "GT-N1", "domain": "network", "component": null, "start": "2026-11-01 18:05:00", "end": "2026-11-01 20:05:00", "group": "G1", "description": "12 communications SLOW sur les ports 80 et 443"},
+    {"id": "GT-A1", "domain": "application", "component": null, "start": "2026-11-01 18:40:00", "end": "2026-11-01 19:52:00", "group": "G1", "description": "Rafale de 19 erreurs applicatives"},
+    {"id": "GT-A2", "domain": "application", "component": null, "start": "2026-11-02 04:00:00", "end": "2026-11-02 04:28:00", "group": "G2", "description": "Rafale de 8 erreurs applicatives"},
+    {"id": "GT-S1", "domain": "security", "component": "203.0.113.77", "start": "2026-11-02 05:00:00", "end": "2026-11-02 06:24:00", "group": "G3", "description": "13 échecs de connexion consécutifs sur le compte admin depuis une IP externe"},
+    {"id": "GT-Y1", "domain": "system", "component": "web-server-01", "start": "2026-11-02 05:40:00", "end": "2026-11-02 08:10:00", "group": "G3", "description": "Saturation CPU (≈85-95 %)"},
+    {"id": "GT-N2", "domain": "network", "component": null, "start": "2026-11-02 11:30:00", "end": "2026-11-02 12:40:00", "group": "G4", "description": "9 communications FAILED sur le port 5432"},
+    {"id": "GT-Y2", "domain": "system", "component": "db-server-01", "start": "2026-11-02 22:20:00", "end": "2026-11-03 00:50:00", "group": "G5", "description": "Mémoire à 90-97 %"},
+    {"id": "GT-Y3", "domain": "system", "component": "app-server-01", "start": "2026-11-03 15:00:00", "end": "2026-11-03 19:50:00", "group": "G6", "description": "Disque à 92-97 %"}
+  ]
+}

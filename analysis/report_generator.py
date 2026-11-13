@@ -233,9 +233,10 @@ def generate_livrable_1_report(
 {chr(10).join([f"  - {sev} : {c} ({c/len(sec_df)*100:.1f}%)" for sev, c in severity_dist.items()])}
 
 ### Anomalies de sécurité détectées :
-- **Suspicion d'attaque par Brute-Force :** Multiples tentatives infructueuses issues d'adresses IP récurrentes :
+- **Adresses IP cumulant plusieurs échecs sur la période** (le cumul seul ne prouve pas une attaque : voir l'analyse temporelle ci-dessous) :
 {chr(10).join([f"  - IP `{ip}` : {count} échecs" for ip, count in suspicious_ips.items()])}
-- **Comptes privilégiés ciblés :** `admin` ({top_failed_users.get('admin', 0)} échecs), `app_user` ({top_failed_users.get('app_user', 0)} échecs).
+- **Comptes les plus touchés :** `admin` ({top_failed_users.get('admin', 0)} échecs), `app_user` ({top_failed_users.get('app_user', 0)} échecs).
+- **Analyse temporelle :** les échecs de `203.0.113.77` (13, tous sur `admin`, sévérité HIGH) sont concentrés entre le 02/11 à 05:00 et 06:24, soit une rafale typique de force brute. Les échecs des autres IP (4 à 14) sont répartis sur 2 à 3 jours, de sévérité LOW pour l'essentiel : erreurs de saisie ou d'accès ponctuelles, sans caractère d'attaque établi.
 
 ---
 
@@ -261,17 +262,35 @@ def generate_livrable_1_report(
 ### Répartition des niveaux :
 {chr(10).join([f"- **{lvl}** : {cnt} logs ({cnt/len(app_df)*100:.1f}%)" for lvl, cnt in app_levels.items()])}
 
+Aucun événement `WARNING` n'existe dans ce jeu de données (uniquement INFO et ERROR).
+
+### Erreurs regroupées par type (chiffres normalisés) :
+{chr(10).join([f"- {m} : {c}" for m, c in errors_df["message"].str.replace(r"\b\d+\b", "N", regex=True).value_counts().items()])}
+
 ### Visualisation des erreurs applicatives récurrentes :
 ![Fréquence des erreurs applicatives]({rel_app_fig})
 
 ---
 
-## 6. Synthèse et Détection d'Incidents Transversaux
+## 6. Synthèse des incidents observés (et limites de l'analyse)
 
-L'analyse croisée des quatre sources de données démontre des interconnexions évidentes :
-1. **Incident du 02 Novembre (Matinée) :** La surcharge prolongée du CPU sur `web-server-01` génère des erreurs applicatives en cascade qui débouchent vers midi sur des dépassements de délais (timeouts) et des échecs de connexions réseau.
-2. **Incident Disque du 03 Novembre :** Saturation critique du disque à 97.2% sur `app-server-01` nécessitant une purge d'urgence.
-3. **Activité Malveillante :** Tentatives d'authentifications répétées sur le compte `admin`, appelant à un durcissement des règles de filtrage pare-feu.
+Six épisodes se distinguent. Leur rapprochement est **temporel** ; aucun lien de cause à effet n'est démontré par ces seules statistiques.
+1. **01/11 18:05–20:05** : 12 communications lentes (ports 80 et 443) et rafale de 19 erreurs applicatives (18:40–19:52). Aucun seuil système franchi.
+2. **02/11 04:00–04:28** : rafale de 8 erreurs applicatives, sans autre signal concomitant.
+3. **02/11 05:00–08:10** : tentatives de connexion sur `admin` depuis `203.0.113.77` (05:00–06:24) et saturation CPU de `web-server-01` (05:40–08:10). Les fenêtres se chevauchent, mais la saturation dure 1 h 46 de plus que les tentatives.
+4. **02/11 11:30–12:40** : 9 échecs réseau sur le port 5432 (base de données), plus une erreur « Database connection failed » à 12:24. La saturation CPU s'était terminée plus de 3 h auparavant.
+5. **02/11 22:20 – 03/11 00:50** : mémoire de `db-server-01` entre 90 et 97,3 % (seuil 85 %).
+6. **03/11 15:00–19:50** : disque de `app-server-01` entre 92 et 97,2 % (seuil 90 %).
+
+L'analyse croisée détaillée (chronologie, hypothèses, éléments à vérifier) figure dans `rapport_final.md`.
+
+## 7. Réponses aux questions de l'étape 1
+
+**Quelles informations indiquent qu'un service réseau a un problème de disponibilité ou de performance ?**
+Disponibilité : communications au statut `FAILED` et taux d'échec par port (ici 9 échecs, tous sur le port 5432 / base de données). Performance : statut `SLOW`, latence supérieure au seuil de 150 ms, pics de latence (1018,5 ms) et durée de la dégradation. Le croisement par port et par fenêtre de temps distingue un service défaillant d'un incident diffus.
+
+**Pourquoi une succession d'échecs d'authentification justifie-t-elle une investigation ?**
+Un échec isolé est banal (faute de frappe). Une rafale depuis une même source sur un même compte, en peu de temps, est la signature d'une attaque par force brute ou par bourrage d'identifiants ; si elle est suivie d'un succès, le compte peut être compromis. Le contexte compte : compte privilégié visé, IP externe, criticité HIGH, heure inhabituelle.
 """
 
     with open(output_path, "w", encoding="utf-8") as f:

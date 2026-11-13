@@ -1,108 +1,141 @@
 import json
+
 import pandas as pd
+
+try:
+    from agents.common import fmt_ts, split_bursts
+except ImportError:
+    from common import fmt_ts, split_bursts
+
+
+def _densest_window(times: pd.Series, window_minutes: int):
+    """Plus forte concentration d'événements dans une fenêtre glissante.
+    Retourne (nombre, début, fin)."""
+    t = list(pd.to_datetime(times).sort_values())
+    best, best_i, best_j, i = 0, 0, 0, 0
+    delta = pd.Timedelta(minutes=window_minutes)
+    for j in range(len(t)):
+        while t[j] - t[i] > delta:
+            i += 1
+        if j - i + 1 > best:
+            best, best_i, best_j = j - i + 1, i, j
+    return best, t[best_i], t[best_j]
 
 
 def security_agent(security_data: pd.DataFrame, config: dict) -> list:
-    """Agent responsable de la détection d'intrusions et de l'analyse des logs de sécurité."""
-    alerts = []
+    """Agent de détection d'intrusions.
 
+    Règle principale : au moins `failed_login_alert_threshold` échecs
+    d'authentification depuis une même IP dans une fenêtre glissante de
+    `failed_login_window_minutes` (30 min par défaut). Compter les échecs sur
+    toute la période (ancienne version) produisait des faux positifs : un
+    utilisateur légitime se trompe de temps en temps.
+    """
+    alerts = []
     if security_data.empty:
         return alerts
 
-    # 1. Extraction des règles de sécurité depuis la configuration
+    # 1. Règles de sécurité (clé réelle du fichier de configuration en priorité)
     sec_rules = config.get("security_rules", {})
-    max_failed_auth = sec_rules.get(
-        "max_failed_attempts",
-        sec_rules.get("max_failed_logins", 3),
+    threshold = sec_rules.get(
+        "failed_login_alert_threshold",
+        sec_rules.get("max_failed_attempts", sec_rules.get("max_failed_logins", 3)),
     )
+    window_min = sec_rules.get("failed_login_window_minutes", 30)
 
-    # 2. Identifier les échecs d'authentification
-    failed_df = security_data[security_data["status"].str.upper() == "FAILED"]
+    # 2. Échecs d'authentification
+    failed_df = security_data[security_data["status"].str.upper() == "FAILED"].copy()
+    failed_df["timestamp"] = pd.to_datetime(failed_df["timestamp"])
 
-    # 3. Regrouper les échecs par IP source et par utilisateur
+    covered_users = set()
     if not failed_df.empty:
-        # A. Détection des répétitions d'échecs par IP (suspicion Brute-Force / Scanning)
-        failed_by_ip = failed_df.groupby("source_ip").size()
+        # 3. Regroupement par IP + règle de détection par fenêtre glissante
+        for ip, grp in failed_df.groupby("source_ip"):
+            count, start, end = _densest_window(grp["timestamp"], window_min)
+            if count < threshold:
+                continue
+            # Étendre à toute la rafale contiguë (écart entre échecs <= fenêtre)
+            for b_start, b_end, b_n in split_bursts(grp["timestamp"], window_min):
+                if b_start <= start and end <= b_end:
+                    start, end, count = b_start, b_end, b_n
+                    break
+            burst = grp[(grp["timestamp"] >= start) & (grp["timestamp"] <= end)]
+            users = sorted(burst["username"].unique())
+            covered_users.update(users)
+            # 4. Classification
+            severity = "CRITICAL" if count >= 10 or "admin" in users else "HIGH"
+            alerts.append(
+                {
+                    "agent": "SecurityAgent",
+                    "type": "BRUTE_FORCE_SUSPECTED",
+                    "severity": severity,
+                    "source_ip": ip,
+                    "failed_attempts": int(count),
+                    "total_failed_attempts": int(len(grp)),
+                    "targeted_users": users,
+                    "window": {"start": fmt_ts(start), "end": fmt_ts(end)},
+                    "message": (
+                        f"Suspicion de brute-force depuis {ip} : {count} échecs "
+                        f"en {window_min} min maximum (seuil {threshold})"
+                    ),
+                    "recommendation": (
+                        f"Proposer le blocage de {ip} au pare-feu (validation humaine "
+                        f"requise) et vérifier les comptes ciblés : {', '.join(users)}."
+                    ),
+                }
+            )
 
-        for ip, count in failed_by_ip.items():
-            if count >= max_failed_auth:
-                targeted_users = list(
-                    failed_df[failed_df["source_ip"] == ip]["username"].unique()
-                )
-
-                # Classifier l'alerte
-                severity = (
-                    "CRITICAL"
-                    if count >= 10 or "admin" in targeted_users
-                    else "HIGH"
-                )
-
-                alerts.append(
-                    {
-                        "agent": "SecurityAgent",
-                        "type": "BRUTE_FORCE_SUSPECTED",
-                        "severity": severity,
-                        "source_ip": ip,
-                        "failed_attempts": int(count),
-                        "targeted_users": targeted_users,
-                        "message": f"Suspicion d'attaque par brute-force depuis l'IP {ip} ({count} échecs consécutifs)",
-                        "recommendation": f"Bloquer l'adresse IP {ip} au niveau du pare-feu et vérifier l'intégrité des comptes ciblés: {', '.join(targeted_users)}.",
-                    }
-                )
-
-        # B. Détection de comptes sensibles ciblés de manière répétée
-        failed_by_user = failed_df.groupby("username").size()
-        for user, count in failed_by_user.items():
-            if user in ["admin", "root", "administrator"] and count >= 5:
+        # Comptes privilégiés visés, non déjà couverts par une alerte brute-force
+        for user, grp in failed_df.groupby("username"):
+            if user in ("admin", "root", "administrator") and len(grp) >= 5:
+                if user in covered_users:
+                    continue
                 alerts.append(
                     {
                         "agent": "SecurityAgent",
                         "type": "PRIVILEGED_ACCOUNT_TARGETED",
                         "severity": "HIGH",
                         "user": user,
-                        "failed_attempts": int(count),
-                        "message": f"Le compte à privilèges '{user}' subit de multiples échecs d'authentification ({count} tentatives)",
-                        "recommendation": f"Activer/imposer l'authentification multifacteur (MFA) pour '{user}' et vérifier l'absence de session compromise.",
+                        "failed_attempts": int(len(grp)),
+                        "window": {
+                            "start": fmt_ts(grp["timestamp"].min()),
+                            "end": fmt_ts(grp["timestamp"].max()),
+                        },
+                        "message": f"Le compte privilégié '{user}' cumule {len(grp)} échecs d'authentification",
+                        "recommendation": f"Imposer le MFA pour '{user}' et vérifier l'absence de session compromise.",
                     }
                 )
 
-    # 4. Identification des événements à criticité native élevée (HIGH ou CRITICAL)
-    high_sev_events = security_data[
-        security_data["severity"].str.upper().isin(["HIGH", "CRITICAL"])
-    ]
-
-    # Déduplication par type d'événement et IP source pour éviter d'inonder la liste
-    unique_threats = high_sev_events.drop_duplicates(
-        subset=["event_type", "source_ip"]
-    )
-    for _, row in unique_threats.iterrows():
-        # Éviter de dupliquer si déjà capturé par la détection brute-force
-        if not any(
-            a.get("source_ip") == row["source_ip"]
-            and a.get("type") == "BRUTE_FORCE_SUSPECTED"
-            for a in alerts
-        ):
-            alerts.append(
-                {
-                    "agent": "SecurityAgent",
-                    "type": "CRITICAL_SECURITY_EVENT",
-                    "severity": row["severity"].upper(),
-                    "source_ip": row["source_ip"],
-                    "event_type": row["event_type"],
-                    "message": f"Événement de sévérité {row['severity']} détecté : {row['event_type']} depuis {row['source_ip']}",
-                    "recommendation": "Isoler la machine source du réseau interne et analyser les journaux d'audit.",
-                }
-            )
-
+    # 5. Événements à forte criticité non déjà couverts par une alerte brute-force
+    sev = security_data["severity"].str.upper().isin(["HIGH", "CRITICAL"])
+    high = security_data[sev].copy()
+    high["timestamp"] = pd.to_datetime(high["timestamp"])
+    done_ips = {a.get("source_ip") for a in alerts}
+    for (ip, ev), grp in high.groupby(["source_ip", "event_type"]):
+        if ip in done_ips:
+            continue
+        alerts.append(
+            {
+                "agent": "SecurityAgent",
+                "type": "CRITICAL_SECURITY_EVENT",
+                "severity": grp["severity"].iloc[0].upper(),
+                "source_ip": ip,
+                "event_type": ev,
+                "window": {
+                    "start": fmt_ts(grp["timestamp"].min()),
+                    "end": fmt_ts(grp["timestamp"].max()),
+                },
+                "message": f"Événement de sévérité {grp['severity'].iloc[0]} : {ev} depuis {ip} ({len(grp)} occurrence(s))",
+                "recommendation": "Analyser les journaux d'audit de la source ; isolement uniquement après validation humaine.",
+            }
+        )
     return alerts
 
 
-# Bloc de test autonome
 if __name__ == "__main__":
     sec_df = pd.read_csv("datasets/security_logs.csv")
     with open("datasets/infrastructure_config.json") as f:
         cfg = json.load(f)
-
-    alerts = security_agent(sec_df, cfg)
-    print(f"=== Résultat Security Agent : {len(alerts)} alerte(s) ===")
-    print(json.dumps(alerts, indent=2))
+    res = security_agent(sec_df, cfg)
+    print(f"=== Security Agent : {len(res)} alerte(s) ===")
+    print(json.dumps(res, indent=2, ensure_ascii=False))

@@ -9,6 +9,41 @@ import pandas as pd
 from sklearn.ensemble import IsolationForest
 
 
+FEATURE_COLS = ["cpu_usage", "memory_usage", "disk_usage", "process_count"]
+
+
+def detect_anomalies_ml(df, contamination=0.05, features=None, per_host=False,
+                        random_state=42, scale=True):
+    """Isolation Forest sans effet de bord (pas de graphique, pas d'impression).
+
+    Retourne une copie de `df` avec une colonne `anomaly` (1 = anomalie, 0 = normal)
+    et `anomaly_score` (plus bas = plus anormal). Les variables sont standardisées
+    (StandardScaler) : sans cela, `process_count` (~150) dominerait les pourcentages.
+    `scale=False` reproduit l'exemple du sujet (variables brutes).
+    `per_host=True` entraîne un modèle par serveur (baselines propres à chaque machine).
+    """
+    from sklearn.preprocessing import StandardScaler
+
+    features = features or FEATURE_COLS
+    out = df.dropna(subset=features).copy()
+    out["anomaly"] = 0
+    out["anomaly_score"] = 0.0
+    groups = (
+        [g.index for _, g in out.groupby("hostname")] if per_host else [out.index]
+    )
+    for idx in groups:
+        X = out.loc[idx, features].to_numpy(dtype=float)
+        if scale:
+            X = StandardScaler().fit_transform(X)
+        model = IsolationForest(
+            contamination=contamination, random_state=random_state, n_estimators=150
+        )
+        pred = model.fit_predict(X)
+        out.loc[idx, "anomaly"] = (pred == -1).astype(int)
+        out.loc[idx, "anomaly_score"] = model.score_samples(X)
+    return out
+
+
 def run_isolation_forest_detection(
     data_path="datasets/system_metrics.csv",
     contamination=0.05,

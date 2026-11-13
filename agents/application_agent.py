@@ -3,6 +3,37 @@ import json
 import re
 import pandas as pd
 
+try:
+    from agents.common import fmt_ts, split_bursts
+except ImportError:
+    from common import fmt_ts, split_bursts
+
+
+def _error_bursts(errors: list, gap_minutes: int = 30, min_size: int = 3):
+    """Sépare les erreurs en rafales (>= min_size erreurs, écart <= gap_minutes)
+    et erreurs isolées."""
+    df = pd.DataFrame(errors)
+    df["ts"] = pd.to_datetime(df["timestamp"])
+    df["norm"] = df["message"].str.replace(r"\b\d+\b", "N", regex=True)
+    bursts, isolated = [], []
+    for start, end, n in split_bursts(df["ts"], gap_minutes):
+        part = df[(df["ts"] >= start) & (df["ts"] <= end)]
+        if n >= min_size:
+            top = part["norm"].value_counts().head(3)
+            bursts.append(
+                {
+                    "start": fmt_ts(start),
+                    "end": fmt_ts(end),
+                    "errors_count": int(n),
+                    "top_messages": {k: int(v) for k, v in top.items()},
+                }
+            )
+        else:
+            isolated += [
+                {"timestamp": fmt_ts(r.ts), "message": r.norm} for r in part.itertuples()
+            ]
+    return bursts, isolated
+
 
 def application_agent(application_logs: list) -> dict:
     """Agent responsable de l'analyse des journaux applicatifs, de la catégorisation des erreurs
@@ -14,6 +45,8 @@ def application_agent(application_logs: list) -> dict:
         "warnings": [],
         "error_frequency": {},
         "peak_error_period": None,
+        "error_bursts": [],
+        "isolated_errors": [],
         "recommendations": [],
     }
 
@@ -82,6 +115,11 @@ def application_agent(application_logs: list) -> dict:
             }
     except Exception:
         results["peak_error_period"] = "Non déterminé"
+
+    # 3 bis. Rafales d'erreurs (concentration temporelle) et erreurs isolées
+    results["error_bursts"], results["isolated_errors"] = _error_bursts(
+        results["errors"]
+    )
 
     # 4. Pistes de diagnostic & Recommandations ciblées
     for signature, count in error_counts.items():

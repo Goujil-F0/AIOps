@@ -230,14 +230,20 @@ with tab_ai:
     st.markdown("#### 1. Incidents Transversaux Détectés (Corrélation Multi-Agents)")
     for corr in report["cross_incident_analysis"]:
         with st.expander(
-            f"🚨 {corr['incident_name']} - Confiance : {corr['confidence']}",
-            expanded=True,
+            f"🚨 {corr['incident_id']} [{corr['severity']}] {corr['incident_name']} - Corrélation : {corr['confidence']}",
+            expanded=False,
         ):
+            st.write(f"**Période :** {corr['start']} → {corr['end']}")
             st.write(f"**Composants impactés :** {', '.join(corr['affected_components'])}")
-            st.write(f"**Explication systémique :** {corr['explanation']}")
-            st.caption(f"**Analyse de causalité :** {corr['distinction_causalite']}")
+            st.write(corr["chronology"])
+            st.write(f"**Hypothèse :** {corr['hypothesis']}")
+            st.caption(f"**Causalité :** {corr['causality_status']}")
 
     st.markdown("#### 2. Rapport Décisionnel Généré par le Module LLM")
+    st.caption(
+        f"Mode de génération : **{llm_insights['generation_mode']}**"
+        + (f" ({llm_insights['fallback_reason']})" if llm_insights.get("fallback_reason") else "")
+    )
     st.info(f"**Résumé de situation :** {llm_insights['situation_summary']}")
     st.write(
         f"**Hypothèse de cause racine (Root Cause) :** {llm_insights['root_cause_explanation']}"

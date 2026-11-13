@@ -1,6 +1,29 @@
 import json
 import pandas as pd
 
+try:
+    from agents.common import fmt_ts
+except ImportError:
+    from common import fmt_ts
+
+
+def _attach_windows(alerts: list, df: pd.DataFrame, limits: dict) -> None:
+    """Ajoute à chaque alerte la fenêtre [premier, dernier] dépassement du seuil."""
+    cols = {"CPU": "cpu_usage", "MEMORY": "memory_usage", "DISK": "disk_usage",
+            "PROCESS_COUNT": "process_count"}
+    if "timestamp" not in df.columns:
+        return
+    for a in alerts:
+        col, th = cols.get(a["metric"]), limits.get(a["metric"])
+        if col is None or th is None:
+            continue
+        rows = df[(df["hostname"] == a["hostname"]) & (df[col] > th)]
+        if rows.empty:
+            continue
+        ts = pd.to_datetime(rows["timestamp"])
+        a["window"] = {"start": fmt_ts(ts.min()), "end": fmt_ts(ts.max())}
+        a["breach_samples_count"] = int(len(rows))
+
 
 def system_agent(system_data: pd.DataFrame, config: dict) -> list:
     """Agent responsable de la supervision des ressources système (CPU, RAM, Disque, Processus)."""
@@ -94,6 +117,10 @@ def system_agent(system_data: pd.DataFrame, config: dict) -> list:
                 }
             )
 
+    _attach_windows(
+        alerts, system_data,
+        {"CPU": th_cpu, "MEMORY": th_mem, "DISK": th_disk, "PROCESS_COUNT": 300},
+    )
     return alerts
 
 
